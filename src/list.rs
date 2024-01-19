@@ -1,6 +1,5 @@
 // Copyright 2023 TiKV Project Authors. Licensed under Apache-2.0.
 
-use core::slice::SlicePattern;
 use std::{
     cmp, mem,
     ops::Deref,
@@ -10,16 +9,13 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    u32,
 };
 
 use bytes::Bytes;
-use rand::Rng;
 
 use super::{arena::Arena, KeyComparator, MAX_HEIGHT};
 use crate::arena::{tag, without_tag};
 
-const HEIGHT_INCREASE: u32 = u32::MAX / 3;
 pub const MAX_NODE_SIZE: usize = mem::size_of::<Node>();
 
 /// A search result.
@@ -131,6 +127,8 @@ impl Node {
 
 struct SkiplistInner<M: MemoryLimiter> {
     height: AtomicUsize,
+    /// The seed for random height generation.
+    seed: AtomicUsize,
     head: NonNull<Node>,
     arena: Arena<M>,
 }
@@ -170,6 +168,7 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
         let head = unsafe { NonNull::new_unchecked(arena.get_mut(head_addr)) };
         Skiplist {
             inner: Arc::new(SkiplistInner {
+                seed: AtomicUsize::new(1),
                 height: AtomicUsize::new(0),
                 head,
                 arena,
@@ -178,14 +177,54 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
         }
     }
 
+    // fn random_height(&self) -> usize {
+    //     let mut rng = rand::thread_rng();
+    //     for h in 0..(MAX_HEIGHT - 1) {
+    //         if !rng.gen_ratio(HEIGHT_INCREASE, u32::MAX) {
+    //             return h;
+    //         }
+    //     }
+    //     MAX_HEIGHT - 1
+    // }
+
+    /// Generates a random height and returns it.
     fn random_height(&self) -> usize {
-        let mut rng = rand::thread_rng();
-        for h in 0..(MAX_HEIGHT - 1) {
-            if !rng.gen_ratio(HEIGHT_INCREASE, u32::MAX) {
-                return h;
+        // Pseudorandom number generation from "Xorshift RNGs" by George Marsaglia.
+        //
+        // This particular set of operations generates 32-bit integers. See:
+        // https://en.wikipedia.org/wiki/Xorshift#Example_implementation
+        let mut num = self.inner.seed.load(Ordering::Relaxed);
+        num ^= num << 13;
+        num ^= num >> 17;
+        num ^= num << 5;
+        self.inner.seed.store(num, Ordering::Relaxed);
+
+        let mut height = cmp::min(MAX_HEIGHT, num.trailing_zeros() as usize + 1);
+        unsafe {
+            // Keep decreasing the height while it's much larger than all towers currently in the
+            // skip list.
+            //
+            // Note that we're loading the pointer only to check whether it is null, so it's okay
+            // to use `epoch::unprotected()` in this situation.
+            while height >= 4 && self.inner.head.as_ref().next_addr(height - 1) == 0 {
+                height -= 1;
             }
         }
-        MAX_HEIGHT - 1
+
+        // Track the max height to speed up lookups
+        let mut max_height = self.inner.height.load(Ordering::Relaxed);
+        while height > max_height {
+            match self.inner.height.compare_exchange_weak(
+                max_height,
+                height,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(h) => max_height = h,
+            }
+        }
+        height
     }
 
     fn height(&self) -> usize {
@@ -448,6 +487,7 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
         Skiplist {
             inner: Arc::new(SkiplistInner {
                 height: AtomicUsize::new(height),
+                seed: AtomicUsize::new(0),
                 head: new_head,
                 arena: arena.clone(),
             }),
@@ -507,6 +547,7 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
         let sl = Skiplist {
             inner: Arc::new(SkiplistInner {
                 height: AtomicUsize::new(self.height()),
+                seed: AtomicUsize::new(0),
                 head: new_head,
                 arena: arena.clone(),
             }),
