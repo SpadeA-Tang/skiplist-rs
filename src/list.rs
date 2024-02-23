@@ -252,7 +252,7 @@ impl Node {
         if current_ref == 1 {
             fence(Ordering::Acquire);
             let ptr = self as *const Self;
-            guard.defer(move || Self::finalize(ptr, arena));
+            guard.defer_unchecked(move || Self::finalize(ptr, arena));
             fail::fail_point!("on_finalize_scheduled");
         }
     }
