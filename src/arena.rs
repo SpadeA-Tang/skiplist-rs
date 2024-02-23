@@ -8,6 +8,9 @@ use crate::{
     Node,
 };
 
+unsafe impl<M: MemoryLimiter> Send for Arena<M> {}
+unsafe impl<M: MemoryLimiter> Sync for Arena<M> {}
+
 #[derive(Clone)]
 pub struct Arena<M: MemoryLimiter> {
     pub limiter: Arc<M>,

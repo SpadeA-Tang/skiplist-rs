@@ -243,7 +243,7 @@ impl Node {
 
     /// Decrements the reference count of a node, destroying it if the count becomes zero.
     #[inline]
-    unsafe fn decrement<M: MemoryLimiter>(&self, arena: Arena<M>) {
+    unsafe fn decrement<M: MemoryLimiter>(&self, arena: Arena<M>, guard: &Guard) {
         fail::fail_point!("on_decrement");
         let current_ref = self
             .refs_and_height
@@ -251,14 +251,15 @@ impl Node {
             >> HEIGHT_BITS;
         if current_ref == 1 {
             fence(Ordering::Acquire);
-            Self::finalize(self, &arena);
+            let ptr = self as *const Self;
+            guard.defer(move || Self::finalize(ptr, arena));
             fail::fail_point!("on_finalize_scheduled");
         }
     }
 
     /// Drops the key and value of a node, then deallocates it.
     #[cold]
-    unsafe fn finalize<M: MemoryLimiter>(ptr: *const Self, arena: &Arena<M>) {
+    unsafe fn finalize<M: MemoryLimiter>(ptr: *const Self, arena: Arena<M>) {
         let ptr = ptr as *mut Self;
         arena.free(ptr);
     }
@@ -393,7 +394,7 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
             guard,
         ) {
             Ok(_) => {
-                curr.decrement(self.inner.arena.clone());
+                curr.decrement(self.inner.arena.clone(), guard);
                 Some(succ.with_tag(0))
             }
             Err(_) => None,
@@ -591,7 +592,7 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
                             .is_ok()
                         {
                             // Success! Decrement the reference count.
-                            n.decrement(self.inner.arena.clone());
+                            n.decrement(self.inner.arena.clone(), guard);
                         } else {
                             self.search_bound(Bound::Included(key), false, guard);
                             break;
@@ -651,7 +652,7 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
                 {
                     // Create a guard that destroys the new node in case search panics.
                     let sg = scopeguard::guard((), |_| {
-                        Node::finalize(node.as_raw(), &self.inner.arena.clone())
+                        Node::finalize(node.as_raw(), self.inner.arena.clone())
                     });
                     search = self.search_position(&n.key, guard);
                     mem::forget(sg);
@@ -842,7 +843,7 @@ impl<M: MemoryLimiter> Drop for SkiplistInner<M> {
                     .as_ref();
 
                 // Deallocate every node.
-                Node::finalize(n, &self.arena);
+                Node::finalize(n, self.arena.clone());
 
                 node = next;
             }
@@ -873,7 +874,8 @@ impl<M: MemoryLimiter> Debug for Entry<M> {
 
 impl<M: MemoryLimiter> Drop for Entry<M> {
     fn drop(&mut self) {
-        unsafe { (*self.node).decrement(self.arena.clone()) }
+        let guard = &pin();
+        unsafe { (*self.node).decrement(self.arena.clone(), guard) }
     }
 }
 
@@ -1011,12 +1013,12 @@ pub(crate) mod tests {
     use super::*;
     use crate::{key::ByteWiseComparator, memory_control::RecorderLimiter};
 
-    #[cfg(not(target_env = "msvc"))]
-    use tikv_jemallocator::Jemalloc;
+    // #[cfg(not(target_env = "msvc"))]
+    // use tikv_jemallocator::Jemalloc;
 
-    #[cfg(not(target_env = "msvc"))]
-    #[global_allocator]
-    static GLOBAL: Jemalloc = Jemalloc;
+    // #[cfg(not(target_env = "msvc"))]
+    // #[global_allocator]
+    // static GLOBAL: Jemalloc = Jemalloc;
 
     fn construct_key(i: i32) -> Vec<u8> {
         format!("key-{:08}", i).into_bytes()
@@ -1290,12 +1292,12 @@ pub(crate) mod tests {
 
     #[test]
     fn concurrent_put_and_remove() {
-        for _ in 0..5 {
+        for _ in 0..10 {
             let sl = Skiplist::<ByteWiseComparator, RecorderLimiter>::new(
                 ByteWiseComparator {},
                 Arc::default(),
             );
-            let n = 50000;
+            let n = 100000;
             for i in (0..n).step_by(3) {
                 let k = format!("k{:04}", i).into_bytes();
                 let v = format!("v{:04}", i).into_bytes();

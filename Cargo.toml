@@ -21,8 +21,8 @@ fail = "0.5"
 [dev-dependencies]
 loom = "0.7"
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = "0.5"
+# [target.'cfg(not(target_env = "msvc"))'.dependencies]
+# tikv-jemallocator = "0.5"
 
-[dependencies.tikv-jemalloc-ctl]
-version = "0.5.0"
+# [dependencies.tikv-jemalloc-ctl]
+# version = "0.5.0"

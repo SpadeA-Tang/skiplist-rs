@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub trait MemoryLimiter: AllocationRecorder {
+pub trait MemoryLimiter: AllocationRecorder + Send + Sync {
     fn acquire(&self, n: usize) -> bool;
     fn reclaim(&self, n: usize);
     fn mem_usage(&self) -> usize;

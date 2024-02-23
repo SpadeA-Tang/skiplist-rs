@@ -2,6 +2,7 @@
 
 #![feature(slice_pattern)]
 #![feature(let_chains)]
+#![feature(associated_type_bounds)]
 
 mod arena;
 mod key;
@@ -12,31 +13,7 @@ pub use key::{ByteWiseComparator, FixedLengthSuffixComparator, KeyComparator};
 pub use list::{IterRef, Node, Skiplist};
 pub use memory_control::{AllocationRecorder, MemoryLimiter, RecorderLimiter};
 
-use tikv_jemalloc_ctl::{epoch, stats, Error};
 
-pub type AllocStats = Vec<(&'static str, usize)>;
-
-pub fn fetch_stats() -> Result<Option<AllocStats>, Error> {
-    // Stats are cached. Need to advance epoch to refresh.
-    epoch::advance()?;
-
-    Ok(Some(vec![
-        ("allocated", stats::allocated::read()?),
-        ("active", stats::active::read()?),
-        ("metadata", stats::metadata::read()?),
-        ("resident", stats::resident::read()?),
-        ("mapped", stats::mapped::read()?),
-        ("retained", stats::retained::read()?),
-        // (
-        //     "dirty",
-        //     stats::resident::read()? - stats::active::read()? - stats::metadata::read()?,
-        // ),
-        (
-            "fragmentation",
-            stats::active::read()? - stats::allocated::read()?,
-        ),
-    ]))
-}
 
 pub struct ReadableSize(pub u64);
 const BINARY_DATA_MAGNITUDE: u64 = 1024;
