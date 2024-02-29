@@ -627,10 +627,12 @@ impl<C: KeyComparator, M: MemoryLimiter> Skiplist<C, M> {
                 let n = Node::alloc(&self.inner.arena, key, value, height, 1);
                 (Shared::<Node>::from(n as *const _), &*n)
             };
+            println!("put 1");
             loop {
                 // Set the lowest successor of `n` to `search.right[0]`.
                 n.tower[0].store(search.right[0], Ordering::Relaxed);
 
+                println!("put 2");
                 // Try installing the new node into the skip list (at level 0).
                 if search.left[0][0]
                     .compare_and_set(search.right[0], node, Ordering::SeqCst, guard)
