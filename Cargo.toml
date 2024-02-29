@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["use_std", "failpoints"]
+default = ["use_std"]
 use_std = ["crossbeam-epoch/use_std"]
 nightly = ["crossbeam-epoch/nightly"]
 failpoints = ["fail/failpoints"]
